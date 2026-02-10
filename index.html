@@ -205,13 +205,24 @@
             transition: color 0.2s;
         }
         
-        .star:hover, .star.active {
+        .star.active {
             color: #f1c40f;
+        }
+        
+        .star.voted {
+            cursor: not-allowed;
+            opacity: 0.7;
         }
         
         .current-rating {
             font-weight: bold;
             color: #3498db;
+            margin-top: 5px;
+        }
+        
+        .vote-info {
+            font-size: 0.9rem;
+            color: #7f8c8d;
             margin-top: 5px;
         }
         
@@ -341,6 +352,16 @@
             display: none;
         }
         
+        .warning-message {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
         .loading {
             display: inline-block;
             width: 20px;
@@ -371,6 +392,11 @@
             <h1><i class="fas fa-camera-retro"></i> Конкурс красоты</h1>
             <p class="tagline">Загружайте свои фотографии и оценивайте работы других участников</p>
         </header>
+        
+        <div class="warning-message">
+            <i class="fas fa-exclamation-triangle"></i>
+            <strong>Внимание:</strong> Фотографии хранятся только в вашем браузере. Другие пользователи их не увидят.
+        </div>
         
         <div class="main-content">
             <div class="card">
@@ -417,11 +443,15 @@
         <footer>
             <p>Сайт для загрузки и оценки фотографий | Все фотографии принадлежат их авторам</p>
             <p>Рейтинг обновляется автоматически на основе оценок пользователей</p>
+            <p><i class="fas fa-info-circle"></i> Каждый пользователь может проголосовать только один раз за каждую фотографию</p>
         </footer>
     </div>
     
     <script>
-        // Данные приложения (в реальном приложении хранились бы на сервере)
+        // УНИКАЛЬНЫЙ ID ПОЛЬЗОВАТЕЛЯ (в реальном приложении это был бы логин или сессия)
+        const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+        
+        // Данные приложения
         let photos = JSON.parse(localStorage.getItem('beautyContestPhotos')) || [];
         
         // DOM элементы
@@ -524,7 +554,8 @@
                     url: e.target.result,
                     title: `Фото от ${new Date().toLocaleDateString()}`,
                     uploadDate: new Date().toISOString(),
-                    ratings: [],
+                    ratings: [], // Оценки
+                    voters: [],  // Кто голосовал
                     averageRating: 0,
                     totalVotes: 0
                 };
@@ -549,14 +580,21 @@
             reader.readAsDataURL(file);
         });
         
-        // Оценка фотографии
+        // Оценка фотографии (один голос за фото)
         function ratePhoto(photoId, rating) {
             // Находим фотографию
             const photoIndex = photos.findIndex(photo => photo.id === photoId);
             if (photoIndex === -1) return;
             
-            // Добавляем оценку
+            // Проверяем, голосовал ли уже этот пользователь
+            if (photos[photoIndex].voters.includes(userId)) {
+                showError('Вы уже голосовали за эту фотографию!');
+                return;
+            }
+            
+            // Добавляем оценку и запоминаем, что пользователь голосовал
             photos[photoIndex].ratings.push(rating);
+            photos[photoIndex].voters.push(userId);
             photos[photoIndex].totalVotes = photos[photoIndex].ratings.length;
             
             // Пересчитываем средний рейтинг
@@ -569,6 +607,9 @@
             // Обновляем интерфейс
             renderGallery();
             updateWinners();
+            
+            // Показываем сообщение
+            showVoteSuccess();
         }
         
         // Рендер галереи
@@ -584,7 +625,12 @@
             // Сортируем по дате загрузки (новые сначала)
             const sortedPhotos = [...photos].sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
             
-            gallery.innerHTML = sortedPhotos.map(photo => `
+            gallery.innerHTML = sortedPhotos.map(photo => {
+                // Проверяем, голосовал ли текущий пользователь за эту фото
+                const hasVoted = photo.voters.includes(userId);
+                const userVote = hasVoted ? photo.ratings[photo.voters.indexOf(userId)] : null;
+                
+                return `
                 <div class="photo-item">
                     <img src="${photo.url}" alt="${photo.title}" class="photo-img">
                     <div class="photo-info">
@@ -594,11 +640,16 @@
                                 Рейтинг: ${photo.averageRating > 0 ? photo.averageRating.toFixed(1) : 'Нет оценок'}
                                 ${photo.totalVotes > 0 ? `(${photo.totalVotes} голосов)` : ''}
                             </div>
+                            ${hasVoted ? 
+                                `<div class="vote-info"><i class="fas fa-check-circle"></i> Вы поставили ${userVote} звезд</div>` : 
+                                ''
+                            }
                             <div class="rating-stars">
                                 ${[1, 2, 3, 4, 5].map(star => `
-                                    <span class="star ${photo.averageRating >= star ? 'active' : ''}" 
+                                    <span class="star ${hasVoted ? 'voted' : ''} ${photo.averageRating >= star ? 'active' : ''}" 
                                           data-rating="${star}"
-                                          data-photo-id="${photo.id}">
+                                          data-photo-id="${photo.id}"
+                                          ${hasVoted ? 'style="cursor: not-allowed;"' : ''}>
                                         <i class="fas fa-star"></i>
                                     </span>
                                 `).join('')}
@@ -606,10 +657,11 @@
                         </div>
                     </div>
                 </div>
-            `).join('');
+                `;
+            }).join('');
             
             // Добавляем обработчики событий для звезд
-            document.querySelectorAll('.star').forEach(star => {
+            document.querySelectorAll('.star:not(.voted)').forEach(star => {
                 star.addEventListener('click', function() {
                     const photoId = parseInt(this.getAttribute('data-photo-id'));
                     const rating = parseInt(this.getAttribute('data-rating'));
@@ -681,8 +733,9 @@
         function showError(message) {
             errorMessage.textContent = message;
             errorMessage.style.display = 'block';
-            uploadBtn.disabled = true;
-            uploadBtn.innerHTML = '<i class="fas fa-upload"></i> Загрузить фото';
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 3000);
         }
         
         function resetUploadForm() {
@@ -712,53 +765,23 @@
             }, 3000);
         }
         
-        // Для демонстрации добавляем несколько начальных фотографий
-        if (photos.length === 0) {
-            // Используем placeholder изображения для демонстрации
-            const demoPhotos = [
-                {
-                    id: 1,
-                    url: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=500&q=80',
-                    title: 'Портрет на природе',
-                    uploadDate: new Date(Date.now() - 86400000).toISOString(),
-                    ratings: [5, 4, 5, 4, 5, 4],
-                    averageRating: 4.5,
-                    totalVotes: 6
-                },
-                {
-                    id: 2,
-                    url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=500&q=80',
-                    title: 'Мужской портрет',
-                    uploadDate: new Date(Date.now() - 172800000).toISOString(),
-                    ratings: [4, 3, 5, 4, 4],
-                    averageRating: 4.0,
-                    totalVotes: 5
-                },
-                {
-                    id: 3,
-                    url: 'https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=500&q=80',
-                    title: 'Улыбка',
-                    uploadDate: new Date(Date.now() - 259200000).toISOString(),
-                    ratings: [5, 5, 5, 4, 5, 5, 4],
-                    averageRating: 4.7,
-                    totalVotes: 7
-                },
-                {
-                    id: 4,
-                    url: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=500&q=80',
-                    title: 'Задумчивый взгляд',
-                    uploadDate: new Date(Date.now() - 345600000).toISOString(),
-                    ratings: [3, 4, 3, 4, 3],
-                    averageRating: 3.4,
-                    totalVotes: 5
-                }
-            ];
+        function showVoteSuccess() {
+            const successMsg = document.createElement('div');
+            successMsg.className = 'success-message';
+            successMsg.innerHTML = `
+                <div style="position: fixed; top: 20px; right: 20px; background-color: #d4edda; color: #155724; padding: 15px 20px; border-radius: 8px; box-shadow: 0 3px 10px rgba(0,0,0,0.2); z-index: 1000; display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-check-circle" style="color: #28a745;"></i>
+                    <span>Ваш голос учтен! Больше нельзя голосовать за эту фотографию.</span>
+                </div>
+            `;
+            document.body.appendChild(successMsg);
             
-            photos = demoPhotos;
-            localStorage.setItem('beautyContestPhotos', JSON.stringify(photos));
-            renderGallery();
-            updateWinners();
+            setTimeout(() => {
+                successMsg.remove();
+            }, 3000);
         }
+        
+        // НЕТ ДЕМО-ФОТОГРАФИЙ - только пользовательские
     </script>
 </body>
-  </html>
+</html>
